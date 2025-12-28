@@ -1,0 +1,382 @@
+#include <WEMOS_Matrix_LED.h>
+
+MLED mled(5); // הגדרת מטריצה עם עוצמת בהירות 5
+
+// מצבים עבור עיבוד פקודות
+enum CommandMode {
+  MODE_IDLE,
+  MODE_DISPLAY,
+  MODE_ANIMATION
+};
+
+// משתנים גלובליים
+CommandMode currentMode = MODE_IDLE;
+String inputBuffer = "";
+String currentFrameData = "";
+String animationFrames[20]; // עד 20 פריימים באנימציה
+int totalAnimationFrames = 0;
+int currentAnimationFrame = 0;
+unsigned long animationDelay = 500;
+unsigned long lastFrameTime = 0;
+bool animationRunning = false;
+bool dataComplete = false;
+
+// יצירת דפוסים קבועים לבדיקה
+const String TEST_PATTERN_ALL_ON = "1111111111111111111111111111111111111111111111111111111111111111";
+const String TEST_PATTERN_ALL_OFF = "0000000000000000000000000000000000000000000000000000000000000000";
+const String TEST_PATTERN_CHECKER = "1010101001010101101010100101010110101010010101011010101001010101";
+const String TEST_PATTERN_BORDER = "1111111110000001100000011000000110000001100000011000000111111111";
+
+void setup() {
+  Serial.begin(115200);
+  while (!Serial) {
+    ; // המתן לחיבור סריאלי
+  }    
+  
+  mled.clear();
+  mled.display();
+  starter();
+  Serial.println("ESP8266 Matrix Ready");
+  Serial.println("Commands format:");
+  Serial.println("  display/{64-bit binary}");
+  Serial.println("  animation/{frame1,frame2,...}{delay}");
+}
+
+void loop() {
+  // קריאת קלט סריאלי
+  readSerialInput();
+  
+  // הפעלת אנימציה אם יש אחת פעילה
+  if (animationRunning) {
+    runAnimation();
+  }
+}
+
+void readSerialInput() {
+  while (Serial.available() > 0) {
+    char c = Serial.read();
+    
+    // התעלם מחזרי שורה אם אין עדיין נתונים
+    if ((c == '\n' || c == '\r') && inputBuffer.length() == 0) {
+      continue;
+    }
+    
+    // קבל את השורה השלמה
+    if (c == '\n' || c == '\r') {
+      if (inputBuffer.length() > 0) {
+        processCommand(inputBuffer);
+        inputBuffer = "";
+      }
+    } else {
+      inputBuffer += c;
+    }
+  }
+}
+
+void processCommand(String command) {
+  Serial.print("Received: ");
+  Serial.println(command);
+  
+  // עצור אנימציה אם רצה
+  if (animationRunning) {
+    stopAnimation();
+  }
+  
+  // בדוק את סוג הפקודה
+  if (command.startsWith("display/")) {
+    processDisplayCommand(command);
+  } else if (command.startsWith("animation/")) {
+    processAnimationCommand(command);
+  } else if (command.startsWith("test/")) {
+    processTestCommand(command);
+  } else {
+    Serial.println("ERROR: Unknown command format");
+    Serial.println("Valid commands:");
+    Serial.println("  display/{data}");
+    Serial.println("  animation/{frames}{delay}");
+    Serial.println("  test/all_on, test/all_off, test/checkerboard, test/border");
+  }
+}
+
+void processDisplayCommand(String command) {
+  // חלץ את הנתונים מהפקודה
+  String data = command.substring(8); // חותך את "display/"
+  
+  // ודא שאורך הנתונים תקין
+  if (data.length() != 64) {
+    Serial.print("ERROR: Data length must be 64 bits, got ");
+    Serial.println(data.length());
+    return;
+  }
+  
+  // הצג את הפריים
+  displayFrame(data);
+  Serial.println("OK: Displayed single frame");
+}
+
+void processAnimationCommand(String command) {
+  // חלץ את התוכן מהפקודה
+  String content = command.substring(10); // חותך את "animation/"
+  
+  // מצא את הסוגריים
+  int startBrace = content.indexOf('{');
+  int endBrace = content.indexOf('}');
+  int delayStart = content.indexOf('{', endBrace + 1);
+  int delayEnd = content.indexOf('}', delayStart + 1);
+  
+  if (startBrace == -1 || endBrace == -1 || delayStart == -1 || delayEnd == -1) {
+    Serial.println("ERROR: Invalid animation format");
+    Serial.println("Correct format: animation/{frame1,frame2,frame3}{delay}");
+    return;
+  }
+  
+  // חלץ את הפריימים
+  String framesStr = content.substring(startBrace + 1, endBrace);
+  String delayStr = content.substring(delayStart + 1, delayEnd);
+  
+  // פרס את הפריימים
+  totalAnimationFrames = 0;
+  int startIdx = 0;
+  int commaIdx;
+  
+  do {
+    commaIdx = framesStr.indexOf(',', startIdx);
+    String frame;
+    
+    if (commaIdx == -1) {
+      frame = framesStr.substring(startIdx);
+    } else {
+      frame = framesStr.substring(startIdx, commaIdx);
+      startIdx = commaIdx + 1;
+    }
+    
+    // ודא שאורך הפריים תקין
+    if (frame.length() == 64) {
+      if (totalAnimationFrames < 20) { // הגבלת כמות הפריימים
+        animationFrames[totalAnimationFrames] = frame;
+        totalAnimationFrames++;
+      }
+    } else {
+      Serial.print("WARNING: Frame ");
+      Serial.print(totalAnimationFrames);
+      Serial.print(" has invalid length: ");
+      Serial.println(frame.length());
+    }
+    
+    if (commaIdx == -1) break;
+  } while (commaIdx != -1);
+  
+  // המר את הדיליי
+  animationDelay = delayStr.toInt();
+  if (animationDelay < 10) animationDelay = 10;
+  if (animationDelay > 5000) animationDelay = 5000;
+  
+  // התחל את האנימציה
+  if (totalAnimationFrames > 0) {
+    currentAnimationFrame = 0;
+    animationRunning = true;
+    lastFrameTime = millis();
+    
+    Serial.print("OK: Animation started with ");
+    Serial.print(totalAnimationFrames);
+    Serial.print(" frames, delay: ");
+    Serial.print(animationDelay);
+    Serial.println("ms");
+    
+    // הצג את הפריים הראשון
+    displayFrame(animationFrames[0]);
+  } else {
+    Serial.println("ERROR: No valid frames in animation");
+  }
+}
+
+void processTestCommand(String command) {
+  String testType = command.substring(5); // חותך את "test/"
+  
+  if (testType == "all_on") {
+    displayTestPattern(TEST_PATTERN_ALL_ON);
+    Serial.println("OK: Test pattern - All LEDs ON");
+  } else if (testType == "all_off") {
+    displayTestPattern(TEST_PATTERN_ALL_OFF);
+    Serial.println("OK: Test pattern - All LEDs OFF");
+  } else if (testType == "checkerboard") {
+    displayTestPattern(TEST_PATTERN_CHECKER);
+    Serial.println("OK: Test pattern - Checkerboard");
+  } else if (testType == "border") {
+    displayTestPattern(TEST_PATTERN_BORDER);
+    Serial.println("OK: Test pattern - Border");
+  } else {
+    Serial.println("ERROR: Unknown test pattern");
+  }
+}
+
+void displayFrame(String frameData) {
+  // נקה את המטריצה
+  mled.clear();
+  
+  // הצג את הפריים לפי הנתונים הבינאריים
+  for (int row = 0; row < 8; row++) {
+    for (int col = 0; col < 8; col++) {
+      int index = row * 8 + col;
+      if (index < frameData.length() && frameData.charAt(index) == '1') {
+        mled.dot(col, row); // שים נקודה בעמודה col ושורה row
+      }
+    }
+  }
+  
+  // עדכן את התצוגה
+  mled.display();
+}
+
+void displayTestPattern(String pattern) {
+  displayFrame(pattern);
+}
+
+void runAnimation() {
+  if (!animationRunning || totalAnimationFrames == 0) return;
+  
+  unsigned long currentTime = millis();
+  
+  // בדוק אם הגיע הזמן להחליף פריים
+  if (currentTime - lastFrameTime >= animationDelay) {
+    // עבור לפריים הבא
+    currentAnimationFrame = (currentAnimationFrame + 1) % totalAnimationFrames;
+    
+    // הצג את הפריים הנוכחי
+    displayFrame(animationFrames[currentAnimationFrame]);
+    
+    // עדכן את הזמן של הפריים האחרון
+    lastFrameTime = currentTime;
+  }
+}
+
+void stopAnimation() {
+  animationRunning = false;
+  totalAnimationFrames = 0;
+  currentAnimationFrame = 0;
+  Serial.println("INFO: Animation stopped");
+}
+
+// פונקציות שירות נוספות
+void displayCheckerboard() {
+  mled.clear();
+  for (int row = 0; row < 8; row++) {
+    for (int col = 0; col < 8; col++) {
+      if ((row + col) % 2 == 0) {
+        mled.dot(col, row);
+      }
+    }
+  }
+  mled.display();
+}
+
+void displayBorder() {
+  mled.clear();
+  for (int row = 0; row < 8; row++) {
+    for (int col = 0; col < 8; col++) {
+      if (row == 0 || row == 7 || col == 0 || col == 7) {
+        mled.dot(col, row);
+      }
+    }
+  }
+  mled.display();
+}
+
+void displayAllOn() {
+  mled.clear();
+  for (int row = 0; row < 8; row++) {
+    for (int col = 0; col < 8; col++) {
+      mled.dot(col, row);
+    }
+  }
+  mled.display();
+}
+
+void displayAllOff() {
+  mled.clear();
+  mled.display();
+}
+
+void starter(){
+
+  mled.dot(4, 1);
+  mled.dot(4, 2);
+  mled.dot(4, 3);
+  mled.dot(4, 4);
+  mled.dot(4, 5);
+  for(int i=0;i<8;i++){
+    mled.intensity=i;//change intensity
+    mled.display();
+    delay(100);
+  }
+  delay(700);
+
+  for(int i=0;i<8;i++){
+    mled.intensity=7-i;//change intensity
+    mled.display();
+    delay(100);
+  }
+
+  delay(100);
+for(int i=0;i<1;i++){
+
+  mled.clear();
+  mled.dot(4, 1);
+  for(int i=0;i<8;i++){
+    mled.intensity=7-i;//change intensity
+    mled.display();
+    delay(90);
+  }
+  mled.clear();
+  mled.dot(4, 2);
+  for(int i=0;i<8;i++){
+    mled.intensity=7-i;//change intensity
+    mled.display();
+    delay(90);
+  }
+  mled.clear();
+  mled.dot(4, 3);
+  for(int i=0;i<8;i++){
+    mled.intensity=7-i;//change intensity
+    mled.display();
+    delay(90);
+  }
+  mled.clear();
+  mled.dot(4, 4);
+  for(int i=0;i<8;i++){
+    mled.intensity=7-i;//change intensity
+    mled.display();
+    delay(90);
+  }
+  mled.clear();
+  mled.dot(4, 5);
+  for(int i=0;i<8;i++){
+    mled.intensity=7-i;//change intensity
+    mled.display();
+    delay(90);
+  }
+  mled.clear();
+  mled.dot(4, 4);
+  for(int i=0;i<8;i++){
+    mled.intensity=7-i;//change intensity
+    mled.display();
+    delay(90);
+  }
+  mled.clear();
+  mled.dot(4, 3);
+  for(int i=0;i<8;i++){
+    mled.intensity=7-i;//change intensity
+    mled.display();
+    delay(90);
+  }
+  mled.clear();
+  mled.dot(4, 2);
+  for(int i=0;i<8;i++){
+    mled.intensity=7-i;//change intensity
+    mled.display();
+    delay(90);
+  }
+}                   
+  mled.clear();
+  mled.display();
+}
