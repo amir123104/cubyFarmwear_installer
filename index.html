@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>CUBY Matrix Mini – Firmware Installer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
+
+  <style>
+    body {
+      background: #ffffff;
+      color: #000;
+      font-family: monospace;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+    }
+    .box {
+      border: 2px solid black;
+      padding: 32px;
+      max-width: 420px;
+      text-align: center;
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 22px;
+    }
+    p {
+      font-size: 14px;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>CUBY Matrix Mini</h1>
+    <p>
+      Connect the device using a USB-C cable.<br>
+      Use Chrome or Edge.
+    </p>
+
+    <esp-web-install-button
+      manifest="manifest.json">
+      <button slot="activate">
+        CONNECT & INSTALL
+      </button>
+    </esp-web-install-button>
+
+    <p style="margin-top:16px;font-size:12px;">
+      Do not unplug during installation.
+    </p>
+  </div>
+</body>
+</html>
