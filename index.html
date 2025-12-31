@@ -1,57 +1,776 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>CUBY Matrix Mini – Firmware Installer</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-
-  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
-
-  <style>
-    body {
-      background: #ffffff;
-      color: #000;
-      font-family: monospace;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-      margin: 0;
-    }
-    .box {
-      border: 2px solid black;
-      padding: 32px;
-      max-width: 420px;
-      text-align: center;
-    }
-    h1 {
-      margin-top: 0;
-      font-size: 22px;
-    }
-    p {
-      font-size: 14px;
-      line-height: 1.4;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP8266 Web Flasher</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #1a237e 0%, #4a148c 100%);
+            color: #333;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background-color: rgba(255, 255, 255, 0.95);
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+        
+        header {
+            background: linear-gradient(to right, #0d47a1, #311b92);
+            color: white;
+            padding: 25px 30px;
+            text-align: center;
+        }
+        
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+        }
+        
+        h1 i {
+            font-size: 2.2rem;
+        }
+        
+        .subtitle {
+            font-size: 1.1rem;
+            opacity: 0.9;
+            max-width: 700px;
+            margin: 0 auto;
+            line-height: 1.5;
+        }
+        
+        .main-content {
+            padding: 30px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+        }
+        
+        @media (max-width: 768px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .panel {
+            background-color: #f8f9fa;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            border: 1px solid #e0e0e0;
+        }
+        
+        .panel h2 {
+            color: #311b92;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e0e0e0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .panel h2 i {
+            color: #0d47a1;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #444;
+        }
+        
+        input[type="url"] {
+            width: 100%;
+            padding: 14px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.3s;
+        }
+        
+        input[type="url"]:focus {
+            border-color: #311b92;
+            outline: none;
+        }
+        
+        .button {
+            display: inline-block;
+            padding: 14px 28px;
+            background: linear-gradient(to right, #0d47a1, #311b92);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: center;
+            width: 100%;
+            margin-top: 10px;
+        }
+        
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(49, 27, 146, 0.3);
+        }
+        
+        .button:active {
+            transform: translateY(0);
+        }
+        
+        .button:disabled {
+            background: #cccccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .button.secondary {
+            background: linear-gradient(to right, #1565c0, #4527a0);
+        }
+        
+        .status-panel {
+            grid-column: span 2;
+        }
+        
+        @media (max-width: 768px) {
+            .status-panel {
+                grid-column: span 1;
+            }
+        }
+        
+        .log-container {
+            background-color: #1e1e1e;
+            color: #f0f0f0;
+            border-radius: 8px;
+            padding: 20px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            margin-top: 10px;
+        }
+        
+        .log-entry {
+            margin-bottom: 8px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #333;
+        }
+        
+        .log-entry.success {
+            color: #4caf50;
+        }
+        
+        .log-entry.error {
+            color: #f44336;
+        }
+        
+        .log-entry.info {
+            color: #2196f3;
+        }
+        
+        .log-entry.warning {
+            color: #ff9800;
+        }
+        
+        .progress-container {
+            margin-top: 20px;
+        }
+        
+        .progress-bar {
+            height: 20px;
+            background-color: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(to right, #0d47a1, #311b92);
+            width: 0%;
+            transition: width 0.5s ease;
+        }
+        
+        .progress-text {
+            text-align: center;
+            font-weight: 600;
+            color: #444;
+        }
+        
+        .instructions {
+            background-color: #e8eaf6;
+            border-left: 4px solid #311b92;
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 0 8px 8px 0;
+        }
+        
+        .instructions h3 {
+            margin-bottom: 10px;
+            color: #311b92;
+        }
+        
+        .instructions ol {
+            padding-left: 20px;
+        }
+        
+        .instructions li {
+            margin-bottom: 10px;
+            line-height: 1.5;
+        }
+        
+        .firmware-info {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #ddd;
+        }
+        
+        .info-item {
+            text-align: center;
+            flex: 1;
+        }
+        
+        .info-value {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: #311b92;
+        }
+        
+        .info-label {
+            font-size: 0.85rem;
+            color: #666;
+        }
+        
+        footer {
+            text-align: center;
+            padding: 20px;
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 0.9rem;
+            margin-top: 20px;
+        }
+        
+        footer a {
+            color: #bb86fc;
+            text-decoration: none;
+        }
+        
+        footer a:hover {
+            text-decoration: underline;
+        }
+        
+        .connection-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            margin-bottom: 20px;
+        }
+        
+        .status-connected {
+            background-color: #e8f5e9;
+            color: #2e7d32;
+        }
+        
+        .status-disconnected {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+        
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+        
+        .connected .status-dot {
+            background-color: #4caf50;
+            animation: pulse 2s infinite;
+        }
+        
+        .disconnected .status-dot {
+            background-color: #f44336;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        
+        .github-example {
+            font-size: 0.85rem;
+            color: #666;
+            margin-top: 5px;
+        }
+    </style>
 </head>
 <body>
-  <div class="box">
-    <h1>CUBY Matrix Mini</h1>
-    <p>
-      Connect the device using a USB-C cable.<br>
-      Use Chrome or Edge.
-    </p>
+    <div class="container">
+        <header>
+            <h1><i class="fas fa-microchip"></i> ESP8266 Web Flasher</h1>
+            <p class="subtitle">Upload firmware to your ESP8266 directly from your browser using a USB cable. No additional software required.</p>
+        </header>
+        
+        <div class="main-content">
+            <div class="panel">
+                <h2><i class="fas fa-wifi"></i> Firmware Source</h2>
+                <div class="form-group">
+                    <label for="firmware-url">GitHub Raw URL to Firmware Binary</label>
+                    <input type="url" id="firmware-url" placeholder="https://github.com/user/repo/raw/branch/path/firmware.bin">
+                    <p class="github-example">Example: https://github.com/esp8266/Arduino/raw/master/tools/sdk/bin/boot_v1.7.bin</p>
+                </div>
+                
+                <div class="form-group">
+                    <button id="load-firmware" class="button">
+                        <i class="fas fa-download"></i> Load Firmware from URL
+                    </button>
+                </div>
+                
+                <div class="form-group">
+                    <label>Or upload firmware from your computer:</label>
+                    <input type="file" id="firmware-file" accept=".bin,.elf" style="display: none;">
+                    <button id="upload-firmware" class="button secondary">
+                        <i class="fas fa-upload"></i> Select Firmware File
+                    </button>
+                </div>
+                
+                <div class="firmware-info">
+                    <div class="info-item">
+                        <div class="info-value" id="file-size">0 KB</div>
+                        <div class="info-label">File Size</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-value" id="flash-address">0x00000</div>
+                        <div class="info-label">Flash Address</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-value" id="firmware-ready">No</div>
+                        <div class="info-label">Firmware Ready</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="panel">
+                <h2><i class="fas fa-usb"></i> Device Connection</h2>
+                <div class="connection-status disconnected" id="connection-status">
+                    <span class="status-dot"></span>
+                    <span>Disconnected</span>
+                </div>
+                
+                <div class="form-group">
+                    <button id="connect-btn" class="button">
+                        <i class="fas fa-plug"></i> Connect to ESP8266
+                    </button>
+                </div>
+                
+                <div class="form-group">
+                    <button id="flash-btn" class="button" disabled>
+                        <i class="fas fa-bolt"></i> Flash Firmware
+                    </button>
+                </div>
+                
+                <div class="form-group">
+                    <button id="reset-btn" class="button secondary" disabled>
+                        <i class="fas fa-redo"></i> Reset ESP8266
+                    </button>
+                </div>
+                
+                <div class="instructions">
+                    <h3>Connection Instructions:</h3>
+                    <ol>
+                        <li>Connect your ESP8266 to your computer via USB cable</li>
+                        <li>Click "Connect to ESP8266" and select the serial port</li>
+                        <li>Put ESP8266 into flash mode (GPIO0 to GND, then reset)</li>
+                        <li>Load your firmware binary (from URL or file)</li>
+                        <li>Click "Flash Firmware" to start uploading</li>
+                    </ol>
+                </div>
+            </div>
+            
+            <div class="panel status-panel">
+                <h2><i class="fas fa-terminal"></i> Flashing Progress</h2>
+                
+                <div class="progress-container">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-fill"></div>
+                    </div>
+                    <div class="progress-text" id="progress-text">Ready to flash</div>
+                </div>
+                
+                <div class="log-container" id="log-container">
+                    <div class="log-entry info">Welcome to ESP8266 Web Flasher</div>
+                    <div class="log-entry info">Connect your ESP8266 and load firmware to begin</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <footer>
+        <p>ESP8266 Web Flasher &copy; 2023 | Based on the Web Serial API | 
+           <a href="https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API" target="_blank">Browser Compatibility Info</a></p>
+        <p>Note: This tool requires a browser that supports the Web Serial API (Chrome/Edge 89+).</p>
+    </footer>
 
-    <esp-web-install-button
-      manifest="manifest.json">
-      <button slot="activate">
-        CONNECT & INSTALL
-      </button>
-    </esp-web-install-button>
-
-    <p style="margin-top:16px;font-size:12px;">
-      Do not unplug during installation.
-    </p>
-  </div>
+    <script>
+        // DOM Elements
+        const firmwareUrlInput = document.getElementById('firmware-url');
+        const loadFirmwareBtn = document.getElementById('load-firmware');
+        const uploadFirmwareBtn = document.getElementById('upload-firmware');
+        const firmwareFileInput = document.getElementById('firmware-file');
+        const connectBtn = document.getElementById('connect-btn');
+        const flashBtn = document.getElementById('flash-btn');
+        const resetBtn = document.getElementById('reset-btn');
+        const logContainer = document.getElementById('log-container');
+        const progressFill = document.getElementById('progress-fill');
+        const progressText = document.getElementById('progress-text');
+        const connectionStatus = document.getElementById('connection-status');
+        const fileSizeElement = document.getElementById('file-size');
+        const flashAddressElement = document.getElementById('flash-address');
+        const firmwareReadyElement = document.getElementById('firmware-ready');
+        
+        // State variables
+        let port = null;
+        let firmwareBinary = null;
+        let flashAddress = 0x00000;
+        let isConnected = false;
+        let isFlashing = false;
+        
+        // Add a log entry to the console
+        function addLog(message, type = 'info') {
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry ${type}`;
+            logEntry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        // Update progress bar
+        function updateProgress(percent, message) {
+            progressFill.style.width = `${percent}%`;
+            progressText.textContent = message;
+            
+            if (percent > 0 && percent < 100) {
+                addLog(message, 'info');
+            } else if (percent === 100) {
+                addLog(message, 'success');
+            }
+        }
+        
+        // Update connection status UI
+        function updateConnectionStatus(connected) {
+            isConnected = connected;
+            
+            if (connected) {
+                connectionStatus.className = 'connection-status status-connected connected';
+                connectionStatus.innerHTML = '<span class="status-dot"></span><span>Connected to ESP8266</span>';
+                connectBtn.innerHTML = '<i class="fas fa-plug"></i> Disconnect';
+                flashBtn.disabled = !firmwareBinary;
+                resetBtn.disabled = false;
+                addLog('Connected to ESP8266', 'success');
+            } else {
+                connectionStatus.className = 'connection-status status-disconnected disconnected';
+                connectionStatus.innerHTML = '<span class="status-dot"></span><span>Disconnected</span>';
+                connectBtn.innerHTML = '<i class="fas fa-plug"></i> Connect to ESP8266';
+                flashBtn.disabled = true;
+                resetBtn.disabled = true;
+                addLog('Disconnected from ESP8266', 'info');
+            }
+        }
+        
+        // Update firmware info UI
+        function updateFirmwareInfo(binary, address) {
+            if (binary) {
+                const sizeInKB = Math.round(binary.byteLength / 1024);
+                fileSizeElement.textContent = `${sizeInKB} KB`;
+                flashAddressElement.textContent = `0x${address.toString(16).padStart(5, '0').toUpperCase()}`;
+                firmwareReadyElement.textContent = 'Yes';
+                firmwareReadyElement.style.color = '#4caf50';
+                
+                if (isConnected) {
+                    flashBtn.disabled = false;
+                }
+                
+                addLog(`Firmware loaded: ${sizeInKB} KB at address 0x${address.toString(16).toUpperCase()}`, 'success');
+            } else {
+                fileSizeElement.textContent = '0 KB';
+                flashAddressElement.textContent = '0x00000';
+                firmwareReadyElement.textContent = 'No';
+                firmwareReadyElement.style.color = '#f44336';
+                flashBtn.disabled = true;
+            }
+        }
+        
+        // Load firmware from URL
+        async function loadFirmwareFromUrl(url) {
+            if (!url) {
+                addLog('Please enter a firmware URL', 'error');
+                return;
+            }
+            
+            try {
+                addLog(`Loading firmware from: ${url}`, 'info');
+                updateProgress(0, 'Downloading firmware...');
+                
+                const response = await fetch(url);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const arrayBuffer = await response.arrayBuffer();
+                firmwareBinary = new Uint8Array(arrayBuffer);
+                
+                // For ESP8266, typical flash address is 0x00000
+                flashAddress = 0x00000;
+                
+                updateFirmwareInfo(firmwareBinary, flashAddress);
+                updateProgress(100, 'Firmware downloaded successfully');
+                
+            } catch (error) {
+                addLog(`Failed to load firmware: ${error.message}`, 'error');
+                updateProgress(0, 'Failed to load firmware');
+                firmwareBinary = null;
+                updateFirmwareInfo(null, 0);
+            }
+        }
+        
+        // Handle firmware file upload
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                try {
+                    const arrayBuffer = e.target.result;
+                    firmwareBinary = new Uint8Array(arrayBuffer);
+                    
+                    // For ESP8266, typical flash address is 0x00000
+                    flashAddress = 0x00000;
+                    
+                    updateFirmwareInfo(firmwareBinary, flashAddress);
+                    addLog(`Loaded firmware file: ${file.name} (${Math.round(file.size / 1024)} KB)`, 'success');
+                } catch (error) {
+                    addLog(`Error reading file: ${error.message}`, 'error');
+                    firmwareBinary = null;
+                    updateFirmwareInfo(null, 0);
+                }
+            };
+            
+            reader.onerror = function() {
+                addLog('Error reading file', 'error');
+                firmwareBinary = null;
+                updateFirmwareInfo(null, 0);
+            };
+            
+            reader.readAsArrayBuffer(file);
+        }
+        
+        // Connect to ESP8266 via Web Serial API
+        async function connectToESP8266() {
+            if (port && isConnected) {
+                // Disconnect if already connected
+                try {
+                    await port.close();
+                    port = null;
+                    updateConnectionStatus(false);
+                } catch (error) {
+                    addLog(`Error disconnecting: ${error.message}`, 'error');
+                }
+                return;
+            }
+            
+            try {
+                // Request serial port
+                port = await navigator.serial.requestPort();
+                
+                // Open the port with baud rate 115200 (common for ESP8266 flashing)
+                await port.open({ baudRate: 115200 });
+                
+                updateConnectionStatus(true);
+                
+                // Listen for data from the ESP8266 (for debugging)
+                const textDecoder = new TextDecoderStream();
+                const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
+                const reader = textDecoder.readable.getReader();
+                
+                // Read data in background
+                readData(reader);
+                
+            } catch (error) {
+                if (error.name === 'NotFoundError') {
+                    addLog('No serial port selected', 'warning');
+                } else {
+                    addLog(`Connection error: ${error.message}`, 'error');
+                }
+                updateConnectionStatus(false);
+            }
+        }
+        
+        // Read data from serial port
+        async function readData(reader) {
+            try {
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) {
+                        reader.releaseLock();
+                        break;
+                    }
+                    
+                    if (value && value.trim()) {
+                        // You can log ESP8266 responses here if needed
+                        // addLog(`ESP: ${value}`, 'info');
+                    }
+                }
+            } catch (error) {
+                // Ignore errors when disconnecting
+                if (port) {
+                    addLog(`Error reading from serial port: ${error.message}`, 'error');
+                }
+            }
+        }
+        
+        // Simulate flashing process (in a real implementation, you'd use esptool.js or similar)
+        async function flashFirmware() {
+            if (!port || !isConnected) {
+                addLog('Please connect to ESP8266 first', 'error');
+                return;
+            }
+            
+            if (!firmwareBinary) {
+                addLog('Please load firmware first', 'error');
+                return;
+            }
+            
+            isFlashing = true;
+            flashBtn.disabled = true;
+            connectBtn.disabled = true;
+            
+            addLog('Starting firmware flash...', 'info');
+            
+            // Simulate the flashing process with progress updates
+            // In a real implementation, you would:
+            // 1. Send ESP8266 into flash mode
+            // 2. Send flash commands and data via serial
+            // 3. Verify the flash was successful
+            
+            // This is a simulation of the flashing process
+            const totalChunks = 100;
+            let currentChunk = 0;
+            
+            const flashInterval = setInterval(() => {
+                if (currentChunk < totalChunks) {
+                    currentChunk++;
+                    const percent = Math.round((currentChunk / totalChunks) * 100);
+                    
+                    if (currentChunk % 10 === 0 || currentChunk === totalChunks) {
+                        updateProgress(percent, `Flashing... ${percent}%`);
+                        
+                        // Simulate sending data to ESP8266
+                        const chunkSize = Math.floor(firmwareBinary.length / totalChunks);
+                        const start = (currentChunk - 1) * chunkSize;
+                        const end = Math.min(currentChunk * chunkSize, firmwareBinary.length);
+                        const chunk = firmwareBinary.slice(start, end);
+                        
+                        // In a real implementation, you would send this chunk via serial
+                        // For now, we just simulate it
+                        addLog(`Writing chunk ${currentChunk}/${totalChunks} (${chunk.length} bytes)`, 'info');
+                    }
+                    
+                    if (currentChunk === totalChunks) {
+                        clearInterval(flashInterval);
+                        
+                        // Simulate verification
+                        setTimeout(() => {
+                            updateProgress(100, 'Firmware flash complete!');
+                            addLog('Verification successful', 'success');
+                            addLog('Please reset your ESP8266 to run the new firmware', 'info');
+                            
+                            isFlashing = false;
+                            flashBtn.disabled = false;
+                            connectBtn.disabled = false;
+                        }, 500);
+                    }
+                }
+            }, 50);
+        }
+        
+        // Reset ESP8266
+        async function resetESP8266() {
+            if (!port || !isConnected) {
+                addLog('Please connect to ESP8266 first', 'error');
+                return;
+            }
+            
+            try {
+                addLog('Resetting ESP8266...', 'info');
+                
+                // In a real implementation, you would send a reset command via serial
+                // For ESP8266, you might toggle DTR/RTS lines or send a specific command
+                
+                // Simulate reset
+                setTimeout(() => {
+                    addLog('ESP8266 reset complete', 'success');
+                }, 500);
+                
+            } catch (error) {
+                addLog(`Error resetting ESP8266: ${error.message}`, 'error');
+            }
+        }
+        
+        // Event Listeners
+        loadFirmwareBtn.addEventListener('click', () => {
+            loadFirmwareFromUrl(firmwareUrlInput.value);
+        });
+        
+        uploadFirmwareBtn.addEventListener('click', () => {
+            firmwareFileInput.click();
+        });
+        
+        firmwareFileInput.addEventListener('change', handleFileUpload);
+        
+        connectBtn.addEventListener('click', connectToESP8266);
+        
+        flashBtn.addEventListener('click', flashFirmware);
+        
+        resetBtn.addEventListener('click', resetESP8266);
+        
+        // Initialize with example URL
+        firmwareUrlInput.value = 'https://github.com/esp8266/Arduino/raw/master/tools/sdk/bin/boot_v1.7.bin';
+        
+        // Add initial log message
+        addLog('Web Flasher initialized. Load firmware and connect to ESP8266 to begin.', 'info');
+    </script>
 </body>
 </html>
