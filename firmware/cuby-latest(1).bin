@@ -1,0 +1,740 @@
+#include <ESP8266WiFi.h>
+#include <FirebaseESP8266.h>
+#include <WEMOS_Matrix_LED.h>
+#include <ESP8266WebServer.h>
+#include <DNSServer.h>
+#include <EEPROM.h>
+
+void checkPairingStatus();
+void checkForCommands();
+void updateStatus();
+void runAnimation();
+void starter();
+void startPairingMode();
+void processCommand(String command);
+void displayFrame(String frameData);
+String generateDeviceID();
+void saveWiFiCredentials(const char* ssid, const char* pass);
+bool loadWiFiCredentials();
+void saveDeviceID(String deviceId);
+String loadDeviceID();
+bool generateAndSaveDeviceID();
+void startAPMode();
+void displayConnected();
+void displayNotConnected();
+void displayDeviceID(String deviceId);
+void connectToWiFi();
+
+#define FIREBASE_HOST "crp-cuby-display-default-rtdb.firebaseio.com"
+#define FIREBASE_AUTH "LiyWxOJdUEaM2sGhsmx2H6HdsaIeEILGlXa0Xut7"
+
+#define DEVICE_ID_ADDR 64  // EEPROM address for device ID (after WiFi credentials)
+#define DEVICE_ID_LENGTH 8  // Length of device ID
+
+FirebaseData firebaseData;
+FirebaseConfig firebaseConfig;
+FirebaseAuth firebaseAuth;
+
+MLED mled(5);
+
+String ownerUID = "";
+String deviceID = "";  // Changed from pairingCode to deviceID
+bool isPaired = false;
+unsigned long lastStatusUpdate = 0;
+unsigned long lastHeartbeat = 0;
+String lastCommand = "";
+bool firstConnection = true;
+bool firebaseInitialized = false;
+
+String animationFrames[20];
+int totalAnimationFrames = 0;
+int currentAnimationFrame = 0;
+unsigned long animationDelay = 500;
+unsigned long lastFrameTime = 0;
+bool animationRunning = false;
+
+ESP8266WebServer server(80);
+DNSServer dns;
+const byte DNS_PORT = 53;
+#define EEPROM_SIZE 96
+#define WIFI_SSID_ADDR 0
+#define WIFI_PASS_ADDR 32
+char savedSSID[32] = {0};
+char savedPASS[32] = {0};
+String apSSID = "Cuby-Setup";
+bool wifiConfigured = false;
+bool inAPMode = false;
+
+//WiFi Captive Portal Functions
+
+void saveWiFiCredentials(const char* ssid, const char* pass) {
+  EEPROM.begin(EEPROM_SIZE);
+  for (int i = 0; i < 32; i++) {
+    EEPROM.write(WIFI_SSID_ADDR + i, i < (int)strlen(ssid) ? ssid[i] : 0);
+    EEPROM.write(WIFI_PASS_ADDR + i, i < (int)strlen(pass) ? pass[i] : 0);
+  }
+  EEPROM.commit();
+  EEPROM.end();
+}
+
+bool loadWiFiCredentials() {
+  EEPROM.begin(EEPROM_SIZE);
+  for (int i = 0; i < 32; i++) {
+    savedSSID[i] = (char)EEPROM.read(WIFI_SSID_ADDR + i);
+    savedPASS[i] = (char)EEPROM.read(WIFI_PASS_ADDR + i);
+  }
+  EEPROM.end();
+  
+  savedSSID[31] = '\0';
+  savedPASS[31] = '\0';
+  
+  bool hasSSID = (strlen(savedSSID) > 0);
+  if (hasSSID) {
+    Serial.print("Loaded WiFi credentials: ");
+    Serial.println(savedSSID);
+  } else {
+    Serial.println("No WiFi credentials found in EEPROM");
+  }
+  
+  return hasSSID;
+}
+
+// Device ID functions
+void saveDeviceID(String deviceId) {
+  EEPROM.begin(EEPROM_SIZE);
+  for (int i = 0; i < DEVICE_ID_LENGTH; i++) {
+    if (i < deviceId.length()) {
+      EEPROM.write(DEVICE_ID_ADDR + i, deviceId.charAt(i));
+    } else {
+      EEPROM.write(DEVICE_ID_ADDR + i, 0);
+    }
+  }
+  EEPROM.commit();
+  EEPROM.end();
+  Serial.print("Device ID saved to EEPROM: ");
+  Serial.println(deviceId);
+}
+
+String loadDeviceID() {
+  EEPROM.begin(EEPROM_SIZE);
+  char idBuffer[DEVICE_ID_LENGTH + 1] = {0};
+  
+  for (int i = 0; i < DEVICE_ID_LENGTH; i++) {
+    char c = (char)EEPROM.read(DEVICE_ID_ADDR + i);
+    if (c == 0 || c == 0xFF) {
+      idBuffer[i] = '\0';
+      break;
+    }
+    idBuffer[i] = c;
+  }
+  idBuffer[DEVICE_ID_LENGTH] = '\0';
+  EEPROM.end();
+  
+  String deviceId = String(idBuffer);
+  
+  if (deviceId.length() == DEVICE_ID_LENGTH) {
+    Serial.print("Loaded Device ID from EEPROM: ");
+    Serial.println(deviceId);
+    return deviceId;
+  } else {
+    Serial.println("No valid Device ID found in EEPROM");
+    return "";
+  }
+}
+
+bool generateAndSaveDeviceID() {
+  String newDeviceID = generateDeviceID();
+  if (newDeviceID.length() == DEVICE_ID_LENGTH) {
+    saveDeviceID(newDeviceID);
+    deviceID = newDeviceID;
+    Serial.print("Generated and saved new Device ID: ");
+    Serial.println(deviceID);
+    return true;
+  }
+  return false;
+}
+
+String generateDeviceID() {
+  const char chars[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  String id = "";
+  randomSeed(micros() + analogRead(A0));
+  for (int i = 0; i < DEVICE_ID_LENGTH; i++) {
+    id += chars[random(0, strlen(chars))];
+  }
+  return id;
+}
+
+void startAPMode() {
+  Serial.println("Starting AP Mode for WiFi configuration");
+  
+  // Load or generate device ID
+  deviceID = loadDeviceID();
+  if (deviceID.length() != DEVICE_ID_LENGTH) {
+    if (!generateAndSaveDeviceID()) {
+      Serial.println("Failed to generate Device ID");
+      return;
+    }
+  }
+  
+  Serial.print("Device ID: ");
+  Serial.println(deviceID);
+  
+  // Update AP SSID to include device ID
+  apSSID = "Cuby-" + deviceID.substring(0, 4);
+  
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(apSSID.c_str());
+  IPAddress myIP = WiFi.softAPIP();
+  
+  Serial.print("AP IP address: ");
+  Serial.println(myIP);
+  
+  dns.start(DNS_PORT, "*", myIP);
+  
+  server.on("/", []() {
+    String page = "<!DOCTYPE html><html><head><meta charset='utf-8'>";
+    page += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+    page += "<title>Cuby Setup</title>";
+    page += "<style>body{font-family:Arial,sans-serif;max-width:400px;margin:0 auto;padding:20px;}";
+    page += "input{width:100%;padding:10px;margin:8px 0;box-sizing:border-box;}";
+    page += "button{background-color:#4CAF50;color:white;padding:14px 20px;border:none;cursor:pointer;width:100%;}";
+    page += ".code{font-family:monospace;font-size:24px;background:#f0f0f0;padding:10px;text-align:center;margin:20px 0;}</style>";
+    page += "</head><body>";
+    page += "<h2>Cuby WiFi Setup</h2>";
+    page += "<div class='code'>" + deviceID + "</div>";
+    page += "<p><strong>Device ID:</strong> " + deviceID + "</p>";
+    page += "<p>This is your permanent device ID. Write it down for pairing.</p>";
+    page += "<p>Enter your WiFi credentials:</p>";
+    page += "<form action='/setup' method='POST'>";
+    page += "<input type='text' name='ssid' placeholder='WiFi SSID' required><br>";
+    page += "<input type='password' name='pass' placeholder='WiFi Password'><br>";
+    page += "<button type='submit'>Save & Connect</button>";
+    page += "</form>";
+    page += "</body></html>";
+    server.send(200, "text/html", page);
+  });
+  
+  server.on("/setup", []() {
+    String ssid = server.arg("ssid");
+    String pass = server.arg("pass");
+    
+    if (ssid.length() > 0) {
+      saveWiFiCredentials(ssid.c_str(), pass.c_str());
+      
+      String page = "<html><head><meta charset='utf-8'></head><body>";
+      page += "<h3>WiFi credentials saved!</h3>";
+      page += "<p>Device ID: <strong>" + deviceID + "</strong></p>";
+      page += "<p>Device will restart and try to connect...</p>";
+      page += "<script>setTimeout(function(){ window.location.href='/'; }, 3000);</script>";
+      page += "</body></html>";
+      server.send(200, "text/html", page);
+      
+      delay(1000);
+      ESP.restart();
+    } else {
+      server.send(400, "text/html", "<h3>Error: SSID cannot be empty</h3>");
+    }
+  });
+  
+  server.begin();
+  Serial.println("Web server started");
+  
+  displayDeviceID(deviceID);
+  
+  inAPMode = true;
+}
+
+void connectToWiFi() {
+  Serial.print("Connecting to WiFi: ");
+  Serial.println(savedSSID);
+  
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(savedSSID, savedPASS);
+  
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 80) {
+    Serial.print(".");
+    delay(500);
+    attempts++;
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println();
+    Serial.print("Connected! IP address: ");
+    Serial.println(WiFi.localIP());
+    displayConnected();
+    wifiConfigured = true;
+  } else {
+    Serial.println("\nFailed to connect to WiFi");
+    displayNotConnected();
+    wifiConfigured = false;
+  }
+}
+
+void displayDeviceID(String deviceId) {
+  // Display a pattern to indicate device ID is shown
+  mled.clear();
+  mled.dot(1, 1);
+  mled.dot(6, 1);
+  mled.dot(1, 6);
+  mled.dot(6, 6);
+  mled.display();
+  delay(1000);
+  mled.clear();
+  mled.display();
+}
+
+void displayFrame(String frameData) {
+  mled.clear();
+  
+  if (frameData.length() == 64) {
+    for (int row = 0; row < 8; row++) {
+      for (int col = 0; col < 8; col++) {
+        int index = row * 8 + col;
+        if (index < frameData.length() && frameData.charAt(index) == '1') {
+          mled.dot(col, row);
+        }
+      }
+    }
+  }
+  
+  mled.display();
+}
+
+void processCommand(String command) {
+  Serial.print("Processing command: ");
+  Serial.println(command);
+  
+  if (animationRunning) animationRunning = false;
+  
+  if (command.startsWith("display/")) {
+    String data = command.substring(8);
+    if (data.length() == 64) {
+      displayFrame(data);
+      Serial.println("OK: Displayed single frame");
+    } else {
+      Serial.print("ERROR: Invalid display data length: ");
+      Serial.println(data.length());
+    }
+  } else if (command.startsWith("animation/")) {
+    String content = command.substring(10);
+    int startBrace = content.indexOf('{');
+    int endBrace = content.indexOf('}');
+    int delayStart = content.indexOf('{', endBrace + 1);
+    int delayEnd = content.indexOf('}', delayStart + 1);
+    
+    if (startBrace != -1 && endBrace != -1 && delayStart != -1 && delayEnd != -1) {
+      String framesStr = content.substring(startBrace + 1, endBrace);
+      String delayStr = content.substring(delayStart + 1, delayEnd);
+      
+      totalAnimationFrames = 0;
+      int startIdx = 0;
+      int commaIdx;
+      
+      do {
+        commaIdx = framesStr.indexOf(',', startIdx);
+        String frame;
+        if (commaIdx == -1) {
+          frame = framesStr.substring(startIdx);
+        } else {
+          frame = framesStr.substring(startIdx, commaIdx);
+          startIdx = commaIdx + 1;
+        }
+        if (frame.length() == 64 && totalAnimationFrames < 20) {
+          animationFrames[totalAnimationFrames] = frame;
+          totalAnimationFrames++;
+        }
+        if (commaIdx == -1) break;
+      } while (commaIdx != -1);
+      
+      animationDelay = delayStr.toInt();
+      if (animationDelay < 10) animationDelay = 10;
+      if (animationDelay > 5000) animationDelay = 5000;
+      
+      if (totalAnimationFrames > 0) {
+        currentAnimationFrame = 0;
+        animationRunning = true;
+        lastFrameTime = millis();
+        displayFrame(animationFrames[0]);
+        Serial.print("OK: Animation started with ");
+        Serial.print(totalAnimationFrames);
+        Serial.print(" frames, delay: ");
+        Serial.println(animationDelay);
+      } else {
+        Serial.println("ERROR: No valid frames in animation");
+      }
+    } else {
+      Serial.println("ERROR: Invalid animation format");
+    }
+  } else if (command.startsWith("test/")) {
+    String testType = command.substring(5);
+    if (testType == "all_on") displayFrame("1111111111111111111111111111111111111111111111111111111111111111");
+    else if (testType == "all_off") displayFrame("0000000000000000000000000000000000000000000000000000000000000000");
+    else if (testType == "checkerboard") displayFrame("1010101001010101101010100101010110101010010101011010101001010101");
+    else if (testType == "border") displayFrame("1111111110000001100000011000000110000001100000011000000111111111");
+  } else if (command.length() > 0) {
+    Serial.print("ERROR: Unknown command format: ");
+    Serial.println(command);
+  }
+}
+
+void runAnimation() {
+  if (!animationRunning || totalAnimationFrames == 0) return;
+  unsigned long currentTime = millis();
+  if (currentTime - lastFrameTime >= animationDelay) {
+    currentAnimationFrame = (currentAnimationFrame + 1) % totalAnimationFrames;
+    displayFrame(animationFrames[currentAnimationFrame]);
+    lastFrameTime = currentTime;
+  }
+}
+
+void starter(){
+  mled.dot(4, 1);
+  mled.dot(4, 2);
+  mled.dot(4, 3);
+  mled.dot(4, 4);
+  mled.dot(4, 5);
+  for(int i=0;i<8;i++){
+    mled.intensity=i;//change intensity
+    mled.display();
+    delay(100);
+  }
+  delay(700);
+
+  for(int i=0;i<8;i++){
+    mled.intensity=7-i;//change intensity
+    mled.display();
+    delay(100);
+  }
+
+  delay(100);
+  for(int i=0;i<1;i++){
+    mled.clear();
+    mled.dot(4, 1);
+    for(int i=0;i<8;i++){
+      mled.intensity=7-i;//change intensity
+      mled.display();
+      delay(90);
+    }
+    mled.clear();
+    mled.dot(4, 2);
+    for(int i=0;i<8;i++){
+      mled.intensity=7-i;//change intensity
+      mled.display();
+      delay(90);
+    }
+    mled.clear();
+    mled.dot(4, 3);
+    for(int i=0;i<8;i++){
+      mled.intensity=7-i;//change intensity
+      mled.display();
+      delay(90);
+    }
+    mled.clear();
+    mled.dot(4, 4);
+    for(int i=0;i<8;i++){
+      mled.intensity=7-i;//change intensity
+      mled.display();
+      delay(90);
+    }
+    mled.clear();
+    mled.dot(4, 5);
+    for(int i=0;i<8;i++){
+      mled.intensity=7-i;//change intensity
+      mled.display();
+      delay(90);
+    }
+    mled.clear();
+    mled.dot(4, 4);
+    for(int i=0;i<8;i++){
+      mled.intensity=7-i;//change intensity
+      mled.display();
+      delay(90);
+    }
+    mled.clear();
+    mled.dot(4, 3);
+    for(int i=0;i<8;i++){
+      mled.intensity=7-i;//change intensity
+      mled.display();
+      delay(90);
+    }
+    mled.clear();
+    mled.dot(4, 2);
+    for(int i=0;i<8;i++){
+      mled.intensity=7-i;//change intensity
+      mled.display();
+      delay(90);
+    }
+  }                   
+  mled.clear();
+  mled.display();
+}
+
+bool initFirebase() {
+  Serial.println("Initializing Firebase...");
+  
+  firebaseConfig.host = FIREBASE_HOST;
+  firebaseConfig.signer.tokens.legacy_token = FIREBASE_AUTH;
+  firebaseConfig.timeout.wifiReconnect = 10 * 1000; // 10 seconds
+  firebaseConfig.timeout.socketConnection = 10 * 1000; // 10 seconds
+  
+  Firebase.begin(&firebaseConfig, &firebaseAuth);
+  Firebase.reconnectWiFi(true);
+  
+  firebaseData.setBSSLBufferSize(2048, 1024);
+  firebaseData.setResponseSize(2048);
+  
+  delay(1000);
+  if (Firebase.ready()) {
+    Serial.println("Firebase initialized successfully");
+    firebaseInitialized = true;
+    return true;
+  } else {
+    Serial.println("Firebase initialization failed");
+    firebaseInitialized = false;
+    return false;
+  }
+}
+
+void startPairingMode() {
+  Serial.println("Starting pairing mode...");
+  
+  // Device ID is already loaded from EEPROM, no need to generate
+  Serial.print("Device ID for pairing: ");
+  Serial.println(deviceID);
+  
+  // Only write to Firebase if initialized
+  if (firebaseInitialized) {
+    if (Firebase.setString(firebaseData, "/pairing_codes/" + deviceID + "/deviceId", deviceID)) {
+      Serial.println("Device ID written to Firebase");
+    } else {
+      Serial.print("Failed to write device ID: ");
+      Serial.println(firebaseData.errorReason());
+    }
+    
+    if (Firebase.setBool(firebaseData, "/pairing_codes/" + deviceID + "/claimed", false)) {
+      Serial.println("Claimed flag set to false");
+    } else {
+      Serial.print("Failed to set claimed flag: ");
+      Serial.println(firebaseData.errorReason());
+    }
+  } else {
+    Serial.println("Firebase not initialized, cannot write device ID");
+  }
+  
+  // Display device ID
+  displayDeviceID(deviceID);
+}
+
+void checkForCommands() {
+  if (!isPaired || ownerUID.length() == 0 || !firebaseInitialized) return;
+  
+  String path = "/devices/" + deviceID + "/latestCommand";
+  if (Firebase.getString(firebaseData, path)) {
+    String newCommand = firebaseData.stringData();
+    
+    if (newCommand.length() > 0 && newCommand != lastCommand) {
+      lastCommand = newCommand;
+      Serial.print("New command received: ");
+      Serial.println(newCommand);
+      processCommand(newCommand);
+    }
+  } else {
+    String error = firebaseData.errorReason();
+    if (firstConnection && error.indexOf("path not exist") >= 0) {
+      Serial.println("No commands yet - creating command path");
+      
+      if (Firebase.setString(firebaseData, path, "")) {
+        Serial.println("Command path initialized");
+      }
+      firstConnection = false;
+    } else if (error.indexOf("path not exist") < 0) {
+      Serial.print("Failed to get command: ");
+      Serial.println(error);
+    }
+  }
+}
+
+void checkPairingStatus() {
+  if (!firebaseInitialized) return;
+  
+  String ownerPath = "/devices/" + deviceID + "/owner";
+  
+  if (Firebase.getString(firebaseData, ownerPath)) {
+    String newOwner = firebaseData.stringData();
+    if (newOwner != ownerUID) {
+      ownerUID = newOwner;
+      isPaired = (ownerUID.length() > 0);
+      
+      if (isPaired) {
+        Serial.println("Device paired with owner: " + ownerUID);
+        
+        Firebase.setString(firebaseData, "/devices/" + deviceID + "/latestCommand", "");
+        
+        if (deviceID.length() > 0 && firebaseInitialized) {
+          Firebase.deleteNode(firebaseData, "/pairing_codes/" + deviceID);
+        }
+      } else {
+        if (deviceID.length() == 0) {
+          // Should not happen, but just in case
+          deviceID = loadDeviceID();
+          if (deviceID.length() != DEVICE_ID_LENGTH) {
+            generateAndSaveDeviceID();
+          }
+          startPairingMode();
+        } else {
+          startPairingMode();
+        }
+      }
+    }
+  } else {
+    String error = firebaseData.errorReason();
+    if (error.indexOf("path not exist") >= 0) {
+      if (!isPaired) {
+        startPairingMode();
+      }
+    } else {
+      Serial.print("Failed to get owner: ");
+      Serial.println(error);
+    }
+  }
+}
+
+void updateStatus() {
+  if (isPaired && ownerUID.length() > 0 && firebaseInitialized) {
+    String statusPath = "/devices/" + deviceID + "/status";
+    
+    if (Firebase.setInt(firebaseData, statusPath + "/lastSeen", millis())) {
+      // Success
+    } else {
+      Serial.print("Failed to update lastSeen: ");
+      Serial.println(firebaseData.errorReason());
+    }
+    
+    if (Firebase.setBool(firebaseData, statusPath + "/online", true)) {
+      // Success
+    } else {
+      Serial.print("Failed to update online status: ");
+      Serial.println(firebaseData.errorReason());
+    }
+  }
+}
+
+void displayConnected() {
+  mled.clear();
+  mled.dot(1, 1);
+  mled.display();
+  delay(1000);
+  mled.clear();
+  mled.display();
+}
+
+void displayNotConnected() {
+  mled.clear();
+  for(int i=0; i<10; i++){
+    mled.dot(1, 1);
+    mled.display();
+    delay(70);
+    mled.clear();
+    mled.display();
+    delay(70);
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  
+  Serial.println("\n\n==================================");
+  Serial.println("Cuby Matrix Display - WiFi Version");
+  Serial.println("==================================");
+  
+  // Initialize matrix
+  mled.clear();
+  mled.display();
+  
+  // Load or generate device ID
+  deviceID = loadDeviceID();
+  if (deviceID.length() != DEVICE_ID_LENGTH) {
+    if (!generateAndSaveDeviceID()) {
+      Serial.println("Failed to generate Device ID!");
+    }
+  }
+  
+  Serial.print("Device ID: ");
+  Serial.println(deviceID);
+  
+  // Try to load WiFi credentials
+  wifiConfigured = loadWiFiCredentials();
+  
+  if (wifiConfigured) {
+    connectToWiFi();
+    
+    if (wifiConfigured) {
+      if (initFirebase()) {
+        checkPairingStatus();
+        starter();
+        
+        lastStatusUpdate = millis();
+        lastHeartbeat = millis();
+        
+        Serial.println("Setup complete. Ready for commands.");
+        Serial.println("==================================");
+      } else {
+        Serial.println("Firebase failed to initialize. Device will work in offline mode.");
+        // Display offline pattern
+        mled.clear();
+        mled.dot(0, 0);
+        mled.dot(7, 7);
+        mled.display();
+      }
+    } else {
+      // WiFi connection failed, start AP mode
+      Serial.println("WiFi connection failed, starting AP mode...");
+      startAPMode();
+    }
+  } else {
+    // No WiFi credentials saved, start AP mode
+    Serial.println("No WiFi credentials found, starting AP mode...");
+    startAPMode();
+  }
+}
+
+void loop() {
+  if (inAPMode) {
+    // Handle captive portal requests
+    dns.processNextRequest();
+    server.handleClient();
+  } else {
+    // Normal operation mode
+    runAnimation();
+    
+    unsigned long currentMillis = millis();
+    
+    if (currentMillis - lastStatusUpdate > 3000) { // Every 3 seconds
+      if (firebaseInitialized) {
+        checkPairingStatus();
+        if (isPaired) {
+          checkForCommands();
+        }
+      }
+      lastStatusUpdate = currentMillis;
+    }
+    
+    if (currentMillis - lastHeartbeat > 30000) { // Every 30 seconds
+      if (firebaseInitialized && isPaired) {
+        updateStatus();
+      }
+      lastHeartbeat = currentMillis;
+    }
+    
+    // Check WiFi status periodically
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("WiFi disconnected, attempting to reconnect...");
+      displayNotConnected();
+      connectToWiFi();
+    }
+    
+    delay(50); // Small delay to prevent watchdog reset
+  }
+}
